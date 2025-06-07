@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.13.14"
+__generated_with = "0.13.15"
 app = marimo.App(width="medium")
 
 with app.setup:
@@ -27,13 +27,22 @@ with app.setup:
     from xml.etree import ElementTree as ET
     import markdown2
     from openaitools import OpenAiTools
+    import os
     memory = Memory("cachedir")
     client = OpenAI()
 
 
 @app.cell
 def _():
+    os.chdir(Path(__file__).parent)
     from config import settings
+    settings
+    return (settings,)
+
+
+@app.cell
+def _(settings):
+
     # Note the Host URL should be in this format: 'https://zammad.example.org/api/v1/'
     zclient = ZammadAPI(url='http://localhost:8080/api/v1/', username=settings.zammad_user, password=settings.zammad_pass)
     zclient
@@ -59,6 +68,12 @@ def _():
 
 
 @app.cell
+def _(refresh_button):
+    refresh_button.value
+    return
+
+
+@app.cell
 def _(refresh_button, zclient):
     refresh_button
     all_tickets=list(depaginate(zclient.ticket.all()))
@@ -67,7 +82,7 @@ def _(refresh_button, zclient):
 
 
 @app.cell
-def fresh_tickets(refresh_button, zclient):
+def _(refresh_button, zclient):
     refresh_button
     fresh_tickets=list(depaginate(zclient.ticket.search("updated_at:>=now-5m")))
     fresh_tickets
@@ -210,9 +225,20 @@ def _():
 
 
 @app.cell
-def _(refresh_button, zclient):
+def _():
+    system_prompt = """
+        You are a support service desk.
+        Please only provide the tool calls.
+        Please keep the answers short.
+        Ask for confirmation of the parameters before calling the tools.
+        """
+    return (system_prompt,)
+
+
+@app.cell
+def _(refresh_button, system_prompt, zclient):
     refresh_button
-    iterate_zammad_openai(zclient, tools=get_tools())
+    iterate_zammad_openai(zclient, tools=get_tools(), system_prompt=system_prompt)
     return
 
 
@@ -231,7 +257,7 @@ def handle_response_output(zclient, ticket, output, tools):
                         internal=False,
                         sender="Agent",
                         type="web",
-                        content_type="text/html",
+                        content_type="text/plain",
                     )
                 )
         case ParsedResponseFunctionToolCall():
@@ -333,6 +359,27 @@ def get_tools():
         return dict(status="running")
 
     return tools
+
+
+@app.cell
+def _():
+
+
+    return
+
+
+@app.cell
+def _():
+
+
+    return
+
+
+@app.cell
+def _():
+
+
+    return
 
 
 @app.cell
