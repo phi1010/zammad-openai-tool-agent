@@ -1,5 +1,8 @@
 import inspect
 from pydantic import BaseModel, Field
+import logging
+import json
+log = logging.getLogger(__name__)
 
 class OpenAiTools:
     def __init__(self):
@@ -48,8 +51,10 @@ class OpenAiTools:
                 )
             schema = annotation.model_json_schema()
             # print(schema)
+
             properties[pname] = schema
-        self._tools[name] = f, (
+
+        toolinfo = (
             {
                 "type": "function",
                 "name": name,
@@ -62,6 +67,8 @@ class OpenAiTools:
                 },
             }
         )
+        logging.info(f"Registered tool {name} with schema {json.dumps(toolinfo, indent=4)}")
+        self._tools[name] = f, toolinfo
 
 
 

@@ -28,8 +28,18 @@ with app.setup:
     import markdown2
     from openaitools import OpenAiTools
     import os
+    import logging
+    import sys
+    log = logging.getLogger(__name__)
     memory = Memory("cachedir")
     client = OpenAI()
+
+
+@app.cell
+def _():
+    logging.basicConfig(level=logging.INFO)
+    log.debug("Configured Logging")
+    return
 
 
 @app.cell
@@ -187,20 +197,26 @@ def _():
 
 
 @app.function
-def handle_ticket(zclient, ticket, tools,system_prompt):
+def handle_ticket(zclient, ticket, tools, system_prompt):
     conversation = ticket_to_conversation(zclient, ticket)
-    ic(conversation)
     todo = (
         conversation[-1].get("role", "") == "user"
         or conversation[-1].get("type", "") == "function_call_output"
     )
     if todo:
-        return query_chatgpt_tools([
-        {
-            "role": "developer",
-            "content": system_prompt,
-        }
-    ] + conversation, tools=tools.tools)
+        log.info(f"==== Processing Ticket {ticket["id"]} ({ticket["title"]!r}) ====")
+        log.info(f"Action required on ticket id {ticket['id']}. Querying OpenAI.")
+        log.debug(f"Conversation: {json.dumps(conversation, indent=4)}")
+        return query_chatgpt_tools(
+            [
+                {
+                    "role": "developer",
+                    "content": system_prompt,
+                }
+            ]
+            + conversation,
+            tools=tools.tools,
+        )
     else:
         return None
 
@@ -212,7 +228,6 @@ def iterate_zammad_openai(zclient, tools, system_prompt):
     )
     for ticket in fresh_tickets:
         response = handle_ticket(zclient, ticket, tools, system_prompt)
-        ic(bool(response), response)
         if response:
             for output in response.output:
                 handle_response_output(zclient, ticket, output, tools)
@@ -226,19 +241,28 @@ def _():
 
 @app.cell
 def _():
-    system_prompt = """
+    system_prompt = (
+        """
         You are a support service desk.
         Please only provide the tool calls.
         Please keep the answers short.
-        Ask for confirmation of the parameters before calling the tools.
         """
+        # Ask for confirmation of the parameters before calling the tools.
+        """Only call tools if the user instructs you to do so."""
+    )
     return (system_prompt,)
 
 
 @app.cell
-def _(refresh_button, system_prompt, zclient):
+def _():
+    tools=get_tools()
+    return (tools,)
+
+
+@app.cell
+def _(refresh_button, system_prompt, tools, zclient):
     refresh_button
-    iterate_zammad_openai(zclient, tools=get_tools(), system_prompt=system_prompt)
+    iterate_zammad_openai(zclient, tools=tools, system_prompt=system_prompt)
     return
 
 
@@ -247,8 +271,7 @@ def handle_response_output(zclient, ticket, output, tools):
     match output:
         case ParsedResponseOutputMessage():
             for content in output.content:
-                ic(ticket["id"])
-                print(content.text)
+                log.info(f"Received text message from OpenAI: {content.text}")
                 zclient.ticket_article.create(
                     params=dict(
                         ticket_id=ticket["id"],
@@ -261,16 +284,15 @@ def handle_response_output(zclient, ticket, output, tools):
                     )
                 )
         case ParsedResponseFunctionToolCall():
-            ic(ticket["id"])
-            print(output)
             name = output.name
             arguments = json.loads(output.arguments)
-            print(f"{name}({arguments!r})")
+            log.info(f"Received tool call from OpenAI: {name}({arguments!r})")
             result = tools.call_function(name, arguments)
-            print(result)
+            log.info(f"Tool returned result {result!r}")
 
             call = output.to_dict()
             call.pop("parsed_arguments")
+            log.debug("Creating Zammad tool call article")
             zclient.ticket_article.create(
                 params=dict(
                     ticket_id=ticket["id"],
@@ -282,6 +304,7 @@ def handle_response_output(zclient, ticket, output, tools):
                     content_type="text/plain",
                 )
             )
+            log.debug("Creating Zammad tool response article")
             zclient.ticket_article.create(
                 params=dict(
                     ticket_id=ticket["id"],
@@ -299,6 +322,7 @@ def handle_response_output(zclient, ticket, output, tools):
                     content_type="text/plain",
                 )
             )
+            log.debug("Articles created.")
 
 
 @app.cell
@@ -317,24 +341,24 @@ def _():
 
 @app.class_definition
 class VM(BaseModel):
-    hostname: str = Field("The machines hostname, in short form")
-    memory: int = Field("The RAM memory in GB")
-    cpus: int = Field("The number of cpus")
+    hostname: str = Field(description="The machines hostname, in short form")
+    memory: int = Field(description="The RAM memory in GB")
+    cpus: int = Field(description="The number of cpus")
 
 
 @app.class_definition
 class Port(BaseModel):
-        proto: str = Field("The protocol, e.g. tcp/udp")
-        port: str = Field("The port number, e.g. 443")
-        target: str = Field("The taget hostname as FQDN")
+        proto: str = Field(description="The protocol, e.g. tcp/udp")
+        port: str = Field(description="The port number, e.g. 443")
+        target: str = Field(description="The taget hostname as FQDN")
 
 
 @app.class_definition
 class CreateResources(BaseModel):
     """Resources to be created"""
 
-    vms: list[VM] = Field("List of Virtual Machines to be created")
-    ports: list[Port] = Field("List of Ports to be opened")
+    vms: list[VM] = Field(description="List of Virtual Machines to be created")
+    ports: list[Port] = Field(description="List of Ports to be opened")
 
 
 @app.function
@@ -350,11 +374,13 @@ def get_tools():
 
     @tools
     def open_port(port: Port):
+        """Opens a network port"""
         print(port)
         return dict(status="done")
 
     @tools
     def create_vm(vm: VM):
+        """Creates a virtual machine"""
         print(vm)
         return dict(status="running")
 
