@@ -9,7 +9,10 @@ with app.setup:
     import marimo as mo
     from dataclasses import dataclass, field
     from openai import OpenAI
-    from openai.types.responses.parsed_response import ParsedResponseOutputMessage, ParsedResponseFunctionToolCall
+    from openai.types.responses.parsed_response import (
+        ParsedResponseOutputMessage,
+        ParsedResponseFunctionToolCall,
+    )
     import json
     from enum import Enum
     from pydantic import BaseModel, Field
@@ -30,6 +33,7 @@ with app.setup:
     import os
     import logging
     import sys
+
     log = logging.getLogger(__name__)
     memory = Memory("cachedir")
     client = OpenAI()
@@ -46,21 +50,25 @@ def _():
 def _():
     os.chdir(Path(__file__).parent)
     from config import settings
+
     settings
     return (settings,)
 
 
 @app.cell
 def _(settings):
-
     # Note the Host URL should be in this format: 'https://zammad.example.org/api/v1/'
-    zclient = ZammadAPI(url='http://localhost:8080/api/v1/', username=settings.zammad_user, password=settings.zammad_pass)
+    zclient = ZammadAPI(
+        url="http://localhost:8080/api/v1/",
+        username=settings.zammad_user,
+        password=settings.zammad_pass,
+    )
     zclient
     return (zclient,)
 
 
 @app.function
-def depaginate(page:zammad_py.api.Pagination):
+def depaginate(page: zammad_py.api.Pagination):
     while page:
         for item in page:
             yield item
@@ -86,7 +94,7 @@ def _(refresh_button):
 @app.cell
 def _(refresh_button, zclient):
     refresh_button
-    all_tickets=list(depaginate(zclient.ticket.all()))
+    all_tickets = list(depaginate(zclient.ticket.all()))
     all_tickets
     return (all_tickets,)
 
@@ -94,7 +102,7 @@ def _(refresh_button, zclient):
 @app.cell
 def _(refresh_button, zclient):
     refresh_button
-    fresh_tickets=list(depaginate(zclient.ticket.search("updated_at:>=now-5m")))
+    fresh_tickets = list(depaginate(zclient.ticket.search("updated_at:>=now-5m")))
     fresh_tickets
     return (fresh_tickets,)
 
@@ -112,7 +120,7 @@ def _(fresh_tickets, zclient):
 def ticket_to_conversation(zclient, ticket):
     articles = zclient.ticket.articles(ticket["id"])
     conversation = []
-    title=ticket["title"]
+    title = ticket["title"]
     match ticket["create_article_sender"]:
         case "Customer":
             conversation.append(
@@ -141,7 +149,7 @@ def ticket_to_conversation(zclient, ticket):
             case "Agent":
                 try:
                     data = body
-                    if article["content_type"]=="text/html":
+                    if article["content_type"] == "text/html":
                         data = html.unescape(re.sub("<.*?>", " ", body))
                     data = json.loads(data)
                     conversation.append(data)
@@ -167,8 +175,6 @@ def query_chatgpt_tools(input, tools=[], model="gpt-4.1-mini", seed=1):
 
 @app.cell
 def _():
-
-
     return
 
 
@@ -191,8 +197,6 @@ def _(all_tickets, zclient):
 
 @app.cell
 def _():
-
-
     return
 
 
@@ -204,8 +208,12 @@ def handle_ticket(zclient, ticket, tools, system_prompt):
         or conversation[-1].get("type", "") == "function_call_output"
     )
     if todo:
-        log.info(f"==== Processing Ticket {ticket["id"]} ({ticket["title"]!r}) ====")
-        log.info(f"Action required on ticket id {ticket['id']}. Querying OpenAI.")
+        log.info(
+            f"==== Processing Ticket {ticket['id']} ({ticket['title']!r}) ===="
+        )
+        log.info(
+            f"Action required on ticket id {ticket['id']}. Querying OpenAI."
+        )
         log.debug(f"Conversation: {json.dumps(conversation, indent=4)}")
         return query_chatgpt_tools(
             [
@@ -235,7 +243,9 @@ def iterate_zammad_openai(zclient, tools, system_prompt):
 
 @app.cell
 def _():
-    Port.model_validate({'proto': 'tcp', 'port': 'https', 'target': 'altair.example.com'})
+    Port.model_validate(
+        {"proto": "tcp", "port": "https", "target": "altair.example.com"}
+    )
     return
 
 
@@ -255,15 +265,8 @@ def _():
 
 @app.cell
 def _():
-    tools=get_tools()
+    tools = get_tools()
     return (tools,)
-
-
-@app.cell
-def _(refresh_button, system_prompt, tools, zclient):
-    refresh_button
-    iterate_zammad_openai(zclient, tools=tools, system_prompt=system_prompt)
-    return
 
 
 @app.function
@@ -325,20 +328,6 @@ def handle_response_output(zclient, ticket, output, tools):
             log.debug("Articles created.")
 
 
-@app.cell
-def _():
-
-
-    return
-
-
-@app.cell
-def _():
-
-
-    return
-
-
 @app.class_definition
 class VM(BaseModel):
     hostname: str = Field(description="The machines hostname, in short form")
@@ -348,9 +337,9 @@ class VM(BaseModel):
 
 @app.class_definition
 class Port(BaseModel):
-        proto: str = Field(description="The protocol, e.g. tcp/udp")
-        port: str = Field(description="The port number, e.g. 443")
-        target: str = Field(description="The taget hostname as FQDN")
+    proto: str = Field(description="The protocol, e.g. tcp/udp")
+    port: str = Field(description="The port number, e.g. 443")
+    target: str = Field(description="The taget hostname as FQDN")
 
 
 @app.class_definition
@@ -365,7 +354,7 @@ class CreateResources(BaseModel):
 def get_tools():
     tools = OpenAiTools()
 
-    #@tools
+    # @tools
     def create_resources(resources: CreateResources):
         for vm in resources.vms:
             print(vm)
@@ -388,79 +377,9 @@ def get_tools():
 
 
 @app.cell
-def _():
-
-
-    return
-
-
-@app.cell
-def _():
-
-
-    return
-
-
-@app.cell
-def _():
-
-
-    return
-
-
-@app.cell
-def _():
-
-
-    return
-
-
-@app.cell
-def _():
-
-
-    return
-
-
-@app.cell
-def _():
-
-
-    return
-
-
-@app.cell
-def _():
-
-
-    return
-
-
-@app.cell
-def _():
-
-
-    return
-
-
-@app.cell
-def _():
-
-
-    return
-
-
-@app.cell
-def _():
-
-
-    return
-
-
-@app.cell
-def _():
-
-
+def _(refresh_button, system_prompt, tools, zclient):
+    refresh_button
+    iterate_zammad_openai(zclient, tools=tools, system_prompt=system_prompt)
     return
 
 
