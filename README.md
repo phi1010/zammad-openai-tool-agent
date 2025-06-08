@@ -19,3 +19,7 @@ def get_weather(location: Location):
     print(location)
     return dict(temperature="20°C", humidity="10%")
 ```
+
+Similar projects:
+
+Instead of using https://github.com/phi1010/python-openai-tools-functions-dictionary, https://ai.pydantic.dev/ could be used to declare tools and to communicate with OpenAI.
