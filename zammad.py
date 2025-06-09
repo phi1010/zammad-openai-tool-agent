@@ -76,16 +76,6 @@ def depaginate(page: zammad_py.api.Pagination):
 
 
 @app.cell
-def _():
-    refresh_button = mo.ui.refresh(
-        options=["10s", "1m", "5m", "10m"],
-        default_interval=None,
-    )
-    refresh_button
-    return (refresh_button,)
-
-
-@app.cell
 def _(refresh_button):
     refresh_button.value
     return
@@ -249,26 +239,6 @@ def _():
     return
 
 
-@app.cell
-def _():
-    system_prompt = (
-        """
-        You are a support service desk.
-        Please only provide the tool calls.
-        Please keep the answers short.
-        """
-        # Ask for confirmation of the parameters before calling the tools.
-        """Only call tools if the user instructs you to do so."""
-    )
-    return (system_prompt,)
-
-
-@app.cell
-def _():
-    tools = get_tools()
-    return (tools,)
-
-
 @app.function
 def handle_response_output(zclient, ticket, output, tools):
     match output:
@@ -328,6 +298,12 @@ def handle_response_output(zclient, ticket, output, tools):
             log.debug("Articles created.")
 
 
+@app.cell
+def _():
+    tools = get_tools()
+    return (tools,)
+
+
 @app.class_definition
 class VM(BaseModel):
     hostname: str = Field(description="The machines hostname, in short form")
@@ -374,6 +350,30 @@ def get_tools():
         return dict(status="running")
 
     return tools
+
+
+@app.cell
+def _():
+    system_prompt = (
+        """
+        You are a support service desk.
+        Please only provide the tool calls.
+        Please keep the answers short.
+        """
+        # """Ask for confirmation of the parameters before calling the tools."""
+        """Only call tools if the user instructs you to do so."""
+    )
+    return (system_prompt,)
+
+
+@app.cell
+def _():
+    refresh_button = mo.ui.refresh(
+        options=["10s", "1m", "5m", "10m"],
+        default_interval=None,
+    )
+    refresh_button
+    return (refresh_button,)
 
 
 @app.cell
