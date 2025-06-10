@@ -229,12 +229,12 @@ def _(fresh_tickets, zclient):
 @app.class_definition
 class ParsedTicket(BaseModel):
     conversation : list[ModelMessage]
-    ctx : typing.Any 
+    ctxdeps : typing.Any 
     query : str | None
 
 
 @app.function
-def parse_ticket(zclient, ticket) -> ParsedTicket:
+def parse_ticket(zclient, ticket, ctxdeps_type) -> ParsedTicket:
     articles = zclient.ticket.articles(ticket["id"])
     conversation = []
     title = ticket["title"]
@@ -243,7 +243,7 @@ def parse_ticket(zclient, ticket) -> ParsedTicket:
             pass
         case "Agent":
             pass
-    ctx = None
+    ctxdeps = None
     last_query = ""
     for article in articles:
         body = article["body"]
@@ -268,20 +268,45 @@ def parse_ticket(zclient, ticket) -> ParsedTicket:
                 last_query = ""
                 if article["internal"] == True:
                     try:
-                        data = json.loads(gzip.decompress(base64.b64decode(data)).decode("utf8"))
-                        #print(data)
-                        conversation+=data["conversation"]
-                        #print(conversation)
-                        ctx = data["ctx"]
+                        data = json.loads(
+                            gzip.decompress(base64.b64decode(data)).decode(
+                                "utf8"
+                            )
+                        )
+                        # print(data)
+                        conversation += data["conversation"]
+                        # print(conversation)
+                        try:
+                            ctxdeps_data = data["ctx"]
+                            ctxdeps = (
+                                ctxdeps_type.model_validate(ctxdeps_data)
+                                if ctxdeps_data is not None
+                                else None
+                            )
+                        except:
+                            log.error(
+                                f"Failed to parse ctxdeps from value {data['ctx']}"
+                            )
                     except:
                         # These are human-written notes
-                        pass
+                        log.warn(f"Failed to parse (probably human) internal response: {data}")
                 else:
                     # These are responses from the bot or from a human
                     pass
-
+    if not conversation:
+        if last_query:
+            last_query = (
+                f"""
+            <title>
+            {title}
+            </title>
+            """
+                + last_query
+            )
+    if last_query:
+        log.info(f"Got query:\n{last_query}")
     return ParsedTicket(
-        conversation=conversation, ctx=ctx, query=last_query or None
+        conversation=conversation, ctxdeps=ctxdeps, query=last_query or None
     )
 
 
@@ -289,7 +314,7 @@ def parse_ticket(zclient, ticket) -> ParsedTicket:
 def _(fresh_tickets, zclient):
     conversations = [
         dict(
-            **(conversation := parse_ticket(zclient, ticket)).dict(),
+            **(conversation := parse_ticket(zclient, ticket, ctxdeps_type=ContextDeps)).dict(),
             ticket=str(ticket),
         )
         for ticket in fresh_tickets
@@ -301,14 +326,16 @@ def _(fresh_tickets, zclient):
 @app.class_definition
 class HandledTicket(BaseModel):
     response : AgentRunResult
-    ctx : typing.Any
+    ctxdeps : typing.Any
 
 
 @app.function
-async def handle_ticket(zclient, get_agent, ticket):
-    parsed_ticket : ParsedTicket = parse_ticket(zclient, ticket)
-    ctx = parsed_ticket.ctx
-    agent = get_agent(ctx)
+async def handle_ticket(zclient, get_agent, ticket, get_initial_context_deps, ctxdeps_type):
+    parsed_ticket : ParsedTicket = parse_ticket(zclient, ticket, ctxdeps_type)
+    ctxdeps = parsed_ticket.ctxdeps
+    if ctxdeps is None:
+        ctxdeps = get_initial_context_deps(zclient, ticket)
+    agent = get_agent(ctxdeps, ticket, zclient)
     todo = bool(parsed_ticket.query)
     if todo:
         log.info(
@@ -320,21 +347,32 @@ async def handle_ticket(zclient, get_agent, ticket):
         #log.debug(f"Conversation: {json.dumps([x.dict() for x in parsed_ticket.conversation], indent=4)}")
         message_history = parsed_ticket.conversation
         query = parsed_ticket.query
-        response = await agent.run(query, message_history=message_history)
-        return HandledTicket(response=response, ctx=ctx)
+        response = await agent.run(query, message_history=message_history, deps=ctxdeps)
+        return HandledTicket(response=response, ctxdeps=ctxdeps)
     else:
         return None
 
 
 @app.function(hide_code=True)
-async def iterate_zammad_openai(zclient, get_agent):
+async def iterate_zammad_openai(zclient, get_agent, get_initial_context_deps, ctxdeps_type):
     fresh_tickets = list(
         depaginate(zclient.ticket.search("updated_at:>=now-5m"))
     )
     for ticket in fresh_tickets:
-        handled_ticket = await handle_ticket(zclient, get_agent=get_agent, ticket=ticket)
+        handled_ticket = await handle_ticket(
+            zclient,
+            get_agent=get_agent,
+            ticket=ticket,
+            get_initial_context_deps=get_initial_context_deps,
+            ctxdeps_type=ctxdeps_type,
+        )
         if handled_ticket:
-            handle_response_output(zclient, ticket, handled_ticket.response, handled_ticket.ctx)
+            handle_response_output(
+                zclient,
+                ticket,
+                handled_ticket.response,
+                handled_ticket.ctxdeps,
+            )
 
 
 @app.cell(hide_code=True)
@@ -363,7 +401,7 @@ def handle_response_output(zclient, ticket, response, ctx):
 
     log.debug("Creating Zammad response history article")
     conversation_json = json.dumps(
-        dict(ctx=ctx, conversation=to_jsonable_python(response.new_messages()))
+        dict(ctx=ctx.dict(), conversation=to_jsonable_python(response.new_messages()))
     )
     compressed_json = base64.b64encode(
         gzip.compress(conversation_json.encode("utf8"))
@@ -449,17 +487,29 @@ def _():
 
 @app.cell
 def _(system_prompt):
-    def get_agent(ctx):
-        agent = Agent("openai:gpt-4o", system_prompt=system_prompt, deps=ContextDeps(user_name="Phillip"))
+    def get_agent(ctx: ContextDeps, ticket: dict, zclient: ZammadAPI):
+        agent = Agent(
+            "openai:gpt-4.1-mini",
+            system_prompt=system_prompt,
+            deps=ctx or ContextDeps(user_name="Phillip"),
+        )
         get_tools(agent)
         return agent
     return (get_agent,)
 
 
+@app.function
+def get_initial_context_deps(zclient, ticket):
+    user = zclient.user.find(ticket["customer_id"])
+    user_name = user["firstname"]
+    ctxdeps = ContextDeps(user_name=user_name)
+    return ctxdeps
+
+
 @app.cell
 async def _(get_agent, refresh_button, zclient):
     refresh_button
-    await iterate_zammad_openai(zclient, get_agent=get_agent)
+    await iterate_zammad_openai(zclient, get_agent=get_agent, get_initial_context_deps=get_initial_context_deps, ctxdeps_type=ContextDeps)
     return
 
 
