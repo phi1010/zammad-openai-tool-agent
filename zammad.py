@@ -33,16 +33,136 @@ with app.setup:
     import os
     import logging
     import sys
+    import base64
+    import gzip
+    import typing
+    from pydantic_ai import Agent, RunContext
+    from pydantic_ai.agent import AgentRunResult
+    from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelMessage
+    from pydantic_core import to_jsonable_python
 
     log = logging.getLogger(__name__)
-    memory = Memory("cachedir")
-    client = OpenAI()
 
 
 @app.cell
 def _():
     logging.basicConfig(level=logging.INFO)
     log.debug("Configured Logging")
+    return
+
+
+@app.cell
+def _():
+
+    agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
+
+
+    @agent.tool_plain  
+    def roll_die() -> str:
+        """Roll a six-sided die and return the result."""
+        num=random.randint(1, 6)
+        print("Number: "+str(num))
+        return str(num)
+
+
+    @agent.tool  
+    def get_player_name(ctx: RunContext[str]) -> str:
+        """Get the user's name."""
+        return ctx.deps
+
+    return (agent,)
+
+
+@app.cell
+async def _(agent):
+
+
+    result1 = await agent.run('Tell me a random number.', deps="Phillip")
+
+    return (result1,)
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _(result1):
+    result1, type(result1)
+    return
+
+
+@app.cell
+def _(result1):
+    result1.all_messages()
+    return
+
+
+@app.cell
+def _(result1):
+    result1.new_messages()
+    return
+
+
+@app.cell
+def _(result1):
+    result1.output
+    return
+
+
+@app.cell
+async def _(agent, result1):
+    result2 = await agent.run('Explain?', message_history=result1.new_messages())
+    print(result2)
+    print(result2.output)
+    return (result2,)
+
+
+@app.cell
+def _(result2):
+    result2.new_messages()
+    return
+
+
+@app.cell
+def _(result2):
+    result2.all_messages()
+    return
+
+
+@app.cell
+def _(result2):
+    history_step_2 = result2.all_messages()
+    as_python_objects2 = to_jsonable_python(history_step_2) 
+    as_python_objects2
+    return (as_python_objects2,)
+
+
+@app.cell
+def _(as_python_objects2):
+    (json_history_2:=json.dumps(as_python_objects2)), len(json_history_2)
+    return
+
+
+@app.cell
+def _(as_python_objects2):
+    (zipped_json_history_2 := base64.b64encode(gzip.compress(json.dumps(as_python_objects2).encode("utf8")))), len(zipped_json_history_2)
+    return
+
+
+@app.cell
+def _(as_python_objects2):
+    same_history_as_step_2 = ModelMessagesTypeAdapter.validate_python(
+        as_python_objects2
+    )
+    same_history_as_step_2
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""# Zammad""")
     return
 
 
@@ -86,7 +206,7 @@ def _(refresh_button, zclient):
     refresh_button
     all_tickets = list(depaginate(zclient.ticket.all()))
     all_tickets
-    return (all_tickets,)
+    return
 
 
 @app.cell
@@ -106,97 +226,90 @@ def _(fresh_tickets, zclient):
     return
 
 
+@app.class_definition
+class ParsedTicket(BaseModel):
+    conversation : list[ModelMessage]
+    ctx : typing.Any 
+    query : str | None
+
+
 @app.function
-def ticket_to_conversation(zclient, ticket):
+def parse_ticket(zclient, ticket) -> ParsedTicket:
     articles = zclient.ticket.articles(ticket["id"])
     conversation = []
     title = ticket["title"]
     match ticket["create_article_sender"]:
         case "Customer":
-            conversation.append(
-                {
-                    "role": "user",
-                    "content": title,
-                }
-            )
+            pass
         case "Agent":
-            conversation.append(
-                {
-                    "role": "assistant",
-                    "content": title,
-                }
-            )
+            pass
+    ctx = None
+    last_query = ""
     for article in articles:
         body = article["body"]
+        content_type = article["content_type"]
+
+        if content_type == "text/html":
+            data = html.unescape(re.sub("<.*?>", " ", body))
+        elif content_type == "text/plain":
+            data = body
+        else:
+            log.error(f"Message with unknown content type {content_type!r}")
+            continue
+
         match article["sender"]:
             case "Customer":
-                conversation.append(
-                    {
-                        "role": "user",
-                        "content": body,
-                    }
-                )
+                last_query += f"""
+                    <message>
+                    {body}
+                    </message>
+                """
             case "Agent":
-                try:
-                    data = body
-                    if article["content_type"] == "text/html":
-                        data = html.unescape(re.sub("<.*?>", " ", body))
-                    data = json.loads(data)
-                    conversation.append(data)
-                except json.JSONDecodeError:
-                    conversation.append(
-                        {
-                            "role": "assistant",
-                            "content": body,
-                        }
-                    )
-    return conversation
+                last_query = ""
+                if article["internal"] == True:
+                    try:
+                        data = json.loads(gzip.decompress(base64.b64decode(data)).decode("utf8"))
+                        #print(data)
+                        conversation+=data["conversation"]
+                        #print(conversation)
+                        ctx = data["ctx"]
+                    except:
+                        # These are human-written notes
+                        pass
+                else:
+                    # These are responses from the bot or from a human
+                    pass
 
-
-@app.function
-def query_chatgpt_tools(input, tools=[], model="gpt-4.1-mini", seed=1):
-    response = client.responses.parse(
-        model=model,
-        input=input,
-        tools=tools,
+    return ParsedTicket(
+        conversation=conversation, ctx=ctx, query=last_query or None
     )
-    return response
 
 
-@app.cell
-def _():
-    return
-
-
-@app.cell
-def _(all_tickets, zclient):
+@app.cell(hide_code=True)
+def _(fresh_tickets, zclient):
     conversations = [
         dict(
-            conversation=(conversation := ticket_to_conversation(zclient, ticket)),
-            ticket=ticket,
-            todo=(
-                conversation[-1].get("role", "") == "user"
-                or conversation[-1].get("type", "") == "function_call_output"
-            ),
+            **(conversation := parse_ticket(zclient, ticket)).dict(),
+            ticket=str(ticket),
         )
-        for ticket in all_tickets
+        for ticket in fresh_tickets
     ]
     conversations
     return
 
 
-@app.cell
-def _():
-    return
+@app.class_definition
+class HandledTicket(BaseModel):
+    response : AgentRunResult
+    ctx : typing.Any
 
 
 @app.function
-def handle_ticket(zclient, ticket, tools, system_prompt):
-    conversation = ticket_to_conversation(zclient, ticket)
-    todo = (
-        conversation[-1].get("role", "") == "user"
-        or conversation[-1].get("type", "") == "function_call_output"
-    )
+async def handle_ticket(zclient, get_agent, ticket):
+    parsed_ticket : ParsedTicket = parse_ticket(zclient, ticket)
+    ctx = parsed_ticket.ctx
+    agent = get_agent(ctx)
+    todo = bool(parsed_ticket.query)
     if todo:
         log.info(
             f"==== Processing Ticket {ticket['id']} ({ticket['title']!r}) ===="
@@ -204,34 +317,27 @@ def handle_ticket(zclient, ticket, tools, system_prompt):
         log.info(
             f"Action required on ticket id {ticket['id']}. Querying OpenAI."
         )
-        log.debug(f"Conversation: {json.dumps(conversation, indent=4)}")
-        return query_chatgpt_tools(
-            [
-                {
-                    "role": "developer",
-                    "content": system_prompt,
-                }
-            ]
-            + conversation,
-            tools=tools.tools,
-        )
+        #log.debug(f"Conversation: {json.dumps([x.dict() for x in parsed_ticket.conversation], indent=4)}")
+        message_history = parsed_ticket.conversation
+        query = parsed_ticket.query
+        response = await agent.run(query, message_history=message_history)
+        return HandledTicket(response=response, ctx=ctx)
     else:
         return None
 
 
-@app.function
-def iterate_zammad_openai(zclient, tools, system_prompt):
+@app.function(hide_code=True)
+async def iterate_zammad_openai(zclient, get_agent):
     fresh_tickets = list(
         depaginate(zclient.ticket.search("updated_at:>=now-5m"))
     )
     for ticket in fresh_tickets:
-        response = handle_ticket(zclient, ticket, tools, system_prompt)
-        if response:
-            for output in response.output:
-                handle_response_output(zclient, ticket, output, tools)
+        handled_ticket = await handle_ticket(zclient, get_agent=get_agent, ticket=ticket)
+        if handled_ticket:
+            handle_response_output(zclient, ticket, handled_ticket.response, handled_ticket.ctx)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     Port.model_validate(
         {"proto": "tcp", "port": "https", "target": "altair.example.com"}
@@ -239,69 +345,62 @@ def _():
     return
 
 
-@app.function
-def handle_response_output(zclient, ticket, output, tools):
-    match output:
-        case ParsedResponseOutputMessage():
-            for content in output.content:
-                log.info(f"Received text message from OpenAI: {content.text}")
-                zclient.ticket_article.create(
-                    params=dict(
-                        ticket_id=ticket["id"],
-                        # subject="Subject",
-                        body=content.text,
-                        internal=False,
-                        sender="Agent",
-                        type="web",
-                        content_type="text/plain",
-                    )
-                )
-        case ParsedResponseFunctionToolCall():
-            name = output.name
-            arguments = json.loads(output.arguments)
-            log.info(f"Received tool call from OpenAI: {name}({arguments!r})")
-            result = tools.call_function(name, arguments)
-            log.info(f"Tool returned result {result!r}")
+@app.function(hide_code=True)
+def handle_response_output(zclient, ticket, response, ctx):
+    if output := response.output:
+        log.info(f"Received text message from OpenAI: {output}")
+        zclient.ticket_article.create(
+            params=dict(
+                ticket_id=ticket["id"],
+                # subject="Subject",
+                body=output,
+                internal=False,
+                sender="Agent",
+                type="web",
+                content_type="text/plain",
+            )
+        )
 
-            call = output.to_dict()
-            call.pop("parsed_arguments")
-            log.debug("Creating Zammad tool call article")
-            zclient.ticket_article.create(
-                params=dict(
-                    ticket_id=ticket["id"],
-                    # subject="Subject",
-                    body=json.dumps(call),
-                    internal=True,
-                    sender="Agent",
-                    type="note",
-                    content_type="text/plain",
-                )
-            )
-            log.debug("Creating Zammad tool response article")
-            zclient.ticket_article.create(
-                params=dict(
-                    ticket_id=ticket["id"],
-                    # subject="Subject",
-                    body=json.dumps(
-                        {
-                            "type": "function_call_output",
-                            "call_id": output.call_id,
-                            "output": json.dumps(result),
-                        },
-                    ),
-                    internal=True,
-                    sender="Agent",
-                    type="note",
-                    content_type="text/plain",
-                )
-            )
-            log.debug("Articles created.")
+    log.debug("Creating Zammad response history article")
+    conversation_json = json.dumps(
+        dict(ctx=ctx, conversation=to_jsonable_python(response.new_messages()))
+    )
+    compressed_json = base64.b64encode(
+        gzip.compress(conversation_json.encode("utf8"))
+    )
+    zclient.ticket_article.create(
+        params=dict(
+            ticket_id=ticket["id"],
+            # subject="Subject",
+            body=compressed_json,
+            internal=True,
+            sender="Agent",
+            type="note",
+            content_type="text/plain",
+        )
+    )
+    log.debug("Articles created.")
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""# Run""")
+    return
 
 
 @app.cell
 def _():
-    tools = get_tools()
-    return (tools,)
+    refresh_button = mo.ui.refresh(
+        options=["10s", "1m", "5m", "10m"],
+        default_interval=None,
+    )
+    refresh_button
+    return (refresh_button,)
+
+
+@app.class_definition
+class ContextDeps(BaseModel):
+    user_name : str
 
 
 @app.class_definition
@@ -318,48 +417,30 @@ class Port(BaseModel):
     target: str = Field(description="The taget hostname as FQDN")
 
 
-@app.class_definition
-class CreateResources(BaseModel):
-    """Resources to be created"""
-
-    vms: list[VM] = Field(description="List of Virtual Machines to be created")
-    ports: list[Port] = Field(description="List of Ports to be opened")
-
-
 @app.function
-def get_tools():
-    tools = OpenAiTools()
-
-    # @tools
-    def create_resources(resources: CreateResources):
-        for vm in resources.vms:
-            print(vm)
-        for port in resources.ports:
-            print(port)
-
-    @tools
-    def open_port(port: Port):
+def get_tools(agent):
+    @agent.tool
+    def open_port(ctx: RunContext[ContextDeps], port: Port):
         """Opens a network port"""
         print(port)
-        return dict(status="done")
+        return dict(status="Port was opened.")
 
-    @tools
-    def create_vm(vm: VM):
+    @agent.tool
+    def create_vm(ctx: RunContext[ContextDeps], vm: VM):
         """Creates a virtual machine"""
         print(vm)
-        return dict(status="running")
-
-    return tools
+        return dict(
+            status="Request is being processed.",
+            next_action="Ask the user if they want to open a port.",
+        )
 
 
 @app.cell
 def _():
     system_prompt = (
-        """
-        You are a support service desk.
-        Please only provide the tool calls.
-        Please keep the answers short.
-        """
+        """You are a support service desk."""
+        """Please only provide the tool calls."""
+        """Please keep the answers short."""
         # """Ask for confirmation of the parameters before calling the tools."""
         """Only call tools if the user instructs you to do so."""
     )
@@ -367,19 +448,18 @@ def _():
 
 
 @app.cell
-def _():
-    refresh_button = mo.ui.refresh(
-        options=["10s", "1m", "5m", "10m"],
-        default_interval=None,
-    )
-    refresh_button
-    return (refresh_button,)
+def _(system_prompt):
+    def get_agent(ctx):
+        agent = Agent("openai:gpt-4o", system_prompt=system_prompt, deps=ContextDeps(user_name="Phillip"))
+        get_tools(agent)
+        return agent
+    return (get_agent,)
 
 
 @app.cell
-def _(refresh_button, system_prompt, tools, zclient):
+async def _(get_agent, refresh_button, zclient):
     refresh_button
-    iterate_zammad_openai(zclient, tools=tools, system_prompt=system_prompt)
+    await iterate_zammad_openai(zclient, get_agent=get_agent)
     return
 
 

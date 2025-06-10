@@ -1,3 +1,9 @@
+# Check out the old version without pydantic-ai at
+# https://github.com/phi1010/zammad-openai-tool-agent/blob/v1.0/zammad_openai_agent.py
+#
+# This code currently does not work
+# See the bottom of the marimo notebook for an example
+
 import zammad
 from zammad import OpenAiTools, BaseModel, Field, ZammadAPI
 from config import settings
