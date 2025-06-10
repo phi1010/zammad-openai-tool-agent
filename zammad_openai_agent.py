@@ -13,15 +13,15 @@ from time import sleep
 log = logging.getLogger(__name__)
 
 
+class ContextDeps(BaseModel):
+    user_name: str
+    age: str = Field(default=25)
+
+
 class Location(BaseModel):
     """Location"""
     city: str = Field(description="The city name in english")
     country: str = Field(description="The country name in english")
-
-
-class ContextDeps(BaseModel):
-    user_name: str
-    age: str = Field(default=25)
 
 
 def get_weather(ctx: RunContext[ContextDeps], location: Location):
