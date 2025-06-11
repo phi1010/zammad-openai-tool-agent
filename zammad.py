@@ -18,21 +18,12 @@ with app.setup:
     from pydantic import BaseModel, Field
     from pathlib import Path
     import random
-    import requests
-    from icecream import ic
-    from joblib import Memory
-    from openai import OpenAI
     import json
-    import polars as pl
-    import functools
     import html
     import re
-    from xml.etree import ElementTree as ET
     import markdown2
-    from openaitools import OpenAiTools
     import os
     import logging
-    import sys
     import base64
     import gzip
     import typing
@@ -310,10 +301,13 @@ def parse_ticket(zclient, ticket, ctxdeps_type) -> ParsedTicket:
                 """
             case "Agent":
                 last_query = ""
+                #print(article["internal"], article["body"])
                 if article["internal"] == True:
                     try:
+                        #print(f"Data:\n{data!r}")
+                        data : str
                         data = json.loads(
-                            gzip.decompress(base64.b64decode(data)).decode(
+                            gzip.decompress(base64.b64decode(data.encode("utf8"))).decode(
                                 "utf8"
                             )
                         )
@@ -331,9 +325,9 @@ def parse_ticket(zclient, ticket, ctxdeps_type) -> ParsedTicket:
                             log.error(
                                 f"Failed to parse ctxdeps from value {data['ctx']} : {e}"
                             )
-                    except:
+                    except Exception as e:
                         # These are human-written notes
-                        log.warn(f"Failed to parse (probably human) internal response: {data}")
+                        log.warning(f"Failed to parse (probably human) internal response: {data} : {e}")
                 else:
                     # These are responses from the bot or from a human
                     pass
@@ -449,8 +443,11 @@ def handle_response_output(zclient, ticket, response, ctx):
         dict(ctx=ctx.dict(), conversation=to_jsonable_python(response.new_messages()))
     )
     compressed_json = base64.b64encode(
-        gzip.compress(conversation_json.encode("utf8"))
-    )
+        gzip.compress(
+            conversation_json.encode("utf8")
+        )
+    ).decode("utf8")
+    print(repr(compressed_json))
     zclient.ticket_article.create(
         params=dict(
             ticket_id=ticket["id"],
