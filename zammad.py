@@ -40,7 +40,8 @@ with app.setup:
     from pydantic_ai.agent import AgentRunResult
     from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelMessage
     from pydantic_core import to_jsonable_python
-    import markdown2
+    #import markdown2
+    #import markdown
 
     log = logging.getLogger(__name__)
 
@@ -158,6 +159,27 @@ def _(as_python_objects2):
         as_python_objects2
     )
     same_history_as_step_2
+    return
+
+
+@app.cell
+def _(markdown):
+    markdown.markdown("""
+    Hier ist die Tabelle mit dem Wetter:
+
+    | Stadt  | Temperatur | Luftfeuchtigkeit |
+    |--------|------------|------------------|
+    | Paris  | 20°C       | 10%              |Hier ist die Tabelle mit dem Wetter:
+
+    | Stadt  | Temperatur | Luftfeuchtigkeit |
+    |--------|------------|------------------|
+    | Paris  | 20°C       | 10%              |
+    | Neapel | 20°C       | 10%              |
+    | Rom    | 20°C       | 10%              |
+
+    | Neapel | 20°C       | 10%              |
+    | Rom    | 20°C       | 10%              |
+    """)
     return
 
 
@@ -409,12 +431,7 @@ def _():
 def handle_response_output(zclient, ticket, response, ctx):
     if output := response.output:
         log.info(f"Received text message from OpenAI: {output}")
-        output_type = "text/plain"
-        try:
-            output = markdown2.markdown(output)
-            output_type = "text/html"
-        except:
-            log.error(f"Failed to format markdown to html")
+        output_type = "text/html"
         zclient.ticket_article.create(
             params=dict(
                 ticket_id=ticket["id"],

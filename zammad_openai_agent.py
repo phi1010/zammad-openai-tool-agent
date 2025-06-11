@@ -77,7 +77,7 @@ def get_agent(ctxdeps: ContextDeps, ticket: dict, zclient: ZammadAPI):
         "Only provide information queried from tool functions, don't give other information.",
         "Ask for information missing in tool function parameters.",
         f"The users name is {ctxdeps.user_name!r}." if ctxdeps else "",
-        "Format the answer using markdown",
+        "Your output must strictly be provided in html format. Don't use any buttons or other interactive elements.",
         "Ask for confirmation of the parameters before running a tool function that alters data or executes an action.",
     ])
     logging.info(f"Got context deps {ctxdeps!r}, creating new agent...")
