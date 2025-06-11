@@ -40,6 +40,7 @@ with app.setup:
     from pydantic_ai.agent import AgentRunResult
     from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelMessage
     from pydantic_core import to_jsonable_python
+    import markdown2
 
     log = logging.getLogger(__name__)
 
@@ -195,6 +196,27 @@ def depaginate(page: zammad_py.api.Pagination):
         page = page.next_page()
 
 
+@app.cell(disabled=True)
+def _(zclient):
+    zclient.ticket_article.create(
+            params=dict(
+                ticket_id=12,
+                # subject="Subject",
+                body=f"""
+                <table>
+                <tr> <th>Foo</th> <th>Foo</th> </tr>
+                <tr> <td>Foo</td> <td>Foo</td> </tr>
+                </table>
+                """,
+                internal=False,
+                sender="Agent",
+                type="note",
+                content_type="text/html",
+            )
+        )
+    return
+
+
 @app.cell
 def _(refresh_button):
     refresh_button.value
@@ -233,7 +255,7 @@ class ParsedTicket(BaseModel):
     query : str | None
 
 
-@app.function
+@app.function(hide_code=True)
 def parse_ticket(zclient, ticket, ctxdeps_type) -> ParsedTicket:
     articles = zclient.ticket.articles(ticket["id"])
     conversation = []
@@ -283,9 +305,9 @@ def parse_ticket(zclient, ticket, ctxdeps_type) -> ParsedTicket:
                                 if ctxdeps_data is not None
                                 else None
                             )
-                        except:
+                        except Exception as e:
                             log.error(
-                                f"Failed to parse ctxdeps from value {data['ctx']}"
+                                f"Failed to parse ctxdeps from value {data['ctx']} : {e}"
                             )
                     except:
                         # These are human-written notes
@@ -329,24 +351,24 @@ class HandledTicket(BaseModel):
     ctxdeps : typing.Any
 
 
-@app.function
+@app.function(hide_code=True)
 async def handle_ticket(zclient, get_agent, ticket, get_initial_context_deps, ctxdeps_type):
     parsed_ticket : ParsedTicket = parse_ticket(zclient, ticket, ctxdeps_type)
     ctxdeps = parsed_ticket.ctxdeps
     if ctxdeps is None:
         ctxdeps = get_initial_context_deps(zclient, ticket)
-    agent = get_agent(ctxdeps, ticket, zclient)
     todo = bool(parsed_ticket.query)
     if todo:
         log.info(
             f"==== Processing Ticket {ticket['id']} ({ticket['title']!r}) ===="
         )
         log.info(
-            f"Action required on ticket id {ticket['id']}. Querying OpenAI."
+            f"Action required on ticket id {ticket['id']}. Querying Agent."
         )
         #log.debug(f"Conversation: {json.dumps([x.dict() for x in parsed_ticket.conversation], indent=4)}")
         message_history = parsed_ticket.conversation
         query = parsed_ticket.query
+        agent = get_agent(ctxdeps, ticket, zclient)
         response = await agent.run(query, message_history=message_history, deps=ctxdeps)
         return HandledTicket(response=response, ctxdeps=ctxdeps)
     else:
@@ -387,6 +409,12 @@ def _():
 def handle_response_output(zclient, ticket, response, ctx):
     if output := response.output:
         log.info(f"Received text message from OpenAI: {output}")
+        output_type = "text/plain"
+        try:
+            output = markdown2.markdown(output)
+            output_type = "text/html"
+        except:
+            log.error(f"Failed to format markdown to html")
         zclient.ticket_article.create(
             params=dict(
                 ticket_id=ticket["id"],
@@ -395,7 +423,7 @@ def handle_response_output(zclient, ticket, response, ctx):
                 internal=False,
                 sender="Agent",
                 type="web",
-                content_type="text/plain",
+                content_type=output_type,
             )
         )
 

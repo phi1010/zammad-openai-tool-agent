@@ -15,13 +15,13 @@ log = logging.getLogger(__name__)
 
 class ContextDeps(BaseModel):
     user_name: str
-    age: str = Field(default=25)
+    age: int = Field(default=25)
 
 
 class Location(BaseModel):
     """Location"""
-    city: str = Field(description="The city name in english")
-    country: str = Field(description="The country name in english")
+    city: str = Field(description="The city name, only in english language")
+    country: str = Field(description="The country name, only in english language")
 
 
 def get_weather(ctx: RunContext[ContextDeps], location: Location):
@@ -43,20 +43,50 @@ def get_user_age(ctx: RunContext[ContextDeps]):
     return ctx.deps.age
 
 
+class VM(BaseModel):
+    hostname: str = Field(description="The machines hostname, in short form")
+    memory: int = Field(description="The RAM memory in GB")
+    cpus: int = Field(description="The number of cpus")
+
+class Port(BaseModel):
+    proto: str = Field(description="The protocol, e.g. tcp/udp")
+    port: str = Field(description="The port number, e.g. 443")
+    target: str = Field(description="The taget hostname as FQDN")
+
+
+def open_port(ctx: RunContext[ContextDeps], port: Port):
+    """Opens a network port"""
+    print(port)
+    return dict(status="Port was opened.")
+
+
+def create_vm(ctx: RunContext[ContextDeps], vm: VM):
+    """Creates a virtual machine"""
+    print(vm)
+    return dict(
+        status="Request is being processed.",
+        next_action="Ask the user if they want to open a port.",
+    )
+
+
 def get_agent(ctxdeps: ContextDeps, ticket: dict, zclient: ZammadAPI):
     system_prompt = "\n".join([
+        "You are a helpful assistant.",
         "Greet the user using their name on the first reply.",
         "Keep the answers short, only reply to what you were asked.",
         "Only provide information queried from tool functions, don't give other information.",
         "Ask for information missing in tool function parameters.",
         f"The users name is {ctxdeps.user_name!r}." if ctxdeps else "",
-        # "Ask for confirmation of the parameters before running a tool function.",
+        "Format the answer using markdown",
+        "Ask for confirmation of the parameters before running a tool function that alters data or executes an action.",
     ])
     logging.info(f"Got context deps {ctxdeps!r}, creating new agent...")
     agent = Agent("openai:gpt-4.1-mini", system_prompt=system_prompt)
     agent.tool(get_weather)
     agent.tool(get_user_name)
     agent.tool(get_user_age)
+    agent.tool(open_port)
+    agent.tool(create_vm)
     return agent
 
 
